@@ -1,0 +1,10 @@
+# Hassas Bilgiler
+.env
+
+# Veritabanı (Gereksiz yere GitHub'ı şişirmesin, millet senin DB'yi napacak)
+*.db
+*.sqlite3
+
+# Python çöpleri
+__pycache__/
+*.pyc
