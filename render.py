@@ -25,33 +25,6 @@ def metni_satirlara_bol(metin, font, max_genislik):
         satirlar.append(gecici_satir)
     return satirlar
 
-def akilli_odak_bul(image_url):
-    """Görüntü Yönetmeni (AI) fotoğraftaki en önemli noktayı bulur."""
-    print("   🎯 Görüntü Yönetmeni odak noktasını arıyor...")
-    try:
-        response = client.chat.completions.create(
-            model="gpt-4o-mini", # Ucuz ve hızlı vision
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": "Sen profesyonel bir fotoğraf editörüsün. Bu habercilik görselindeki en önemli odak noktasının (örneğin bir insanın yüzü, ana eylem) yatay ve dikey konumunu yüzde olarak (%0-%100 arası) bul. SADECE şu JSON formatında dön: {\"x\": 50, \"y\": 30}"},
-                        {"type": "image_url", "image_url": {"url": image_url}}
-                    ]
-                }
-            ],
-            response_format={ "type": "json_object" },
-            max_tokens=50
-        )
-        cikti = json.loads(response.choices[0].message.content)
-        x_yuzde = cikti.get("x", 50)
-        y_yuzde = cikti.get("y", 50)
-        print(f"   👁️ Odak Kilitlendi: Yatay %{x_yuzde} | Dikey %{y_yuzde}")
-        return x_yuzde, y_yuzde
-    except Exception as e:
-        print(f"   [HATA] Yönetmen kör oldu, merkeze odaklanıyoruz: {e}")
-        return 50, 50 # Sıçarsa hata vermesin, eski usul tam ortadan kessin
-
 def sablonu_uzerine_giydir(haber_resim_yolu, sablon_yolu, cikti_yolu, baslik, ozet_metni, odak_x_yuzde=50, odak_y_yuzde=50):
     """Odak noktasına göre kaydırarak kırpar, şablonu ve sola yatık yazıları çakar."""
     arka_plan = Image.open(haber_resim_yolu).convert("RGBA")
