@@ -12,6 +12,7 @@ def veritabanini_kur():
     c.execute('''
         CREATE TABLE IF NOT EXISTS haber_havuzu (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
+            grup_id TEXT, -- BAK BURAYI EKLEDİK
             kaynak_tipi TEXT,
             kaynak_adi TEXT,
             orijinal_link TEXT,
@@ -42,7 +43,7 @@ def havuza_firlat(haber_data):
             haber_data.get('orijinal_link', ''),
             haber_data.get('baslik'),
             haber_data.get('tam_metin'),
-            haber_data.get('medya_var_mi', ''), 
+            haber_data.get('medya_url', ''), 
             haber_data.get('cekilen_zaman')
         ))
         conn.commit()
