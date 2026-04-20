@@ -1,54 +1,56 @@
 import feedparser
 import time
-from web_scraper import extract_news_with_newspaper4k
+import sqlite3
+from web_scraper import extract_news_with_newspaper4k # Bunu da sonra refactor ederiz
 import db_manager
 
-# Aynı haberleri tekrar tekrar çekip kotayı ve RAM'i ağlatmamak için geçici hafıza
-islenmis_linkler = set()
-
-# Kan emilecek hedeflerin RSS linkleri (Burası senin vizyonuna göre uzar gider)
-RSS_KAYNAKLARI = [
+RSS_SOURCES = [
     "https://www.trthaber.com/gundem_articles.rss",
     "https://www.ntv.com.tr/turkiye.rss",
     "https://www.sozcu.com.tr/rss/gundem.xml",
     "https://feeds.bbci.co.uk/turkce/rss.xml",
     "https://rss.dw.com/xml/rss-tur-all"
 ]
-# GDH,BLOB
 
-def orumcek_mesaisi():
-    print("🕸️ [ÖRÜMCEK] RSS Tarayıcı sahaya indi, ağlar atılıyor...")
+def is_link_processed(url):
+    """Checks the database directly instead of volatile RAM memory."""
+    conn = sqlite3.connect(db_manager.DB_NAME, timeout=10)
+    c = conn.cursor()
+    c.execute("SELECT 1 FROM news_pool WHERE original_link = ?", (url,))
+    result = c.fetchone()
+    conn.close()
+    return bool(result)
+
+def spider_shift():
+    print("🕸️ [SPIDER] RSS Crawler hit the field, casting webs...")
     
     while True:
-        for rss_url in RSS_KAYNAKLARI:
+        for rss_url in RSS_SOURCES:
             try:
-                # Siteye sessizce gir ve RSS'i hortumla
                 feed = feedparser.parse(rss_url)
-                print(f"[TARANIYOR] {rss_url} ({len(feed.entries)} içerik bulundu)")
+                print(f"[SCANNING] {rss_url} ({len(feed.entries)} items found)")
                 
-                # Sadece en tepedeki taze 5 habere bakıyoruz, geçmişi deşmeye gerek yok
+                # Sadece en taze 5 habere bakıyoruz
                 for entry in feed.entries[:5]:
                     link = entry.link
                     
-                    if link not in islenmis_linkler:
-                        print(f"   [+] YENİ AV: {entry.title}")
-                        islenmis_linkler.add(link)
+                    # RAM'e değil, DB'ye soruyoruz!
+                    if not is_link_processed(link):
+                        print(f"   [+] NEW PREY: {entry.title}")
                         
-                        # Newspaper4k'ya linki yolla, içini deşip bize JSON versin
-                        haber_data = extract_news_with_newspaper4k(link)
+                        # Newspaper4k ile içeriği deş
+                        news_data = extract_news_with_newspaper4k(link)
                         
-                        if haber_data:
-                            # Gelen veriyi acımadan SQLite veritabanına bas
-                            db_manager.havuza_firlat(haber_data)
+                        if news_data:
+                            db_manager.toss_into_pool(news_data)
+                        else:
+                            print("   [-] Could not extract meaningful data. Skipping.")
                             
             except Exception as e:
-                print(f"   [HATA] {rss_url} taranırken sistem sıçtı: {e}")
+                print(f"   [ERROR] System shit the bed while scanning {rss_url}: {e}")
         
-        print("\n⏳ [ÖRÜMCEK] Devriye bitti. Yeni haberler için 10 dakika uykuya geçiliyor...\n")
-        # Botu 600 saniye (10 dakika) uyut ki siteler bizi DDoS atıyoruz sanıp banlamasın
+        print("\n⏳ [SPIDER] Patrol finished. Sleeping for 10 minutes to avoid bans...\n")
         time.sleep(600) 
 
 if __name__ == "__main__":
-    # Tablo yoksa kursun, işi sağlama alalım
-    db_manager.veritabanini_kur() 
-    orumcek_mesaisi()
+    spider_shift()

@@ -1,52 +1,51 @@
 import os
+import asyncio
 from dotenv import load_dotenv
 from telethon import TelegramClient, events
-import asyncio
 import db_manager
 
-# .env dosyasını sisteme yükle
 load_dotenv()
 
-# Şifreleri artık gizli kasadan (.env) çekiyoruz
 API_ID = int(os.getenv("TELEGRAM_API_ID"))
 API_HASH = os.getenv("TELEGRAM_API_HASH")
 
-# Sızacağımız/Dinleyeceğimiz kanalların Telegram kullanıcı adları (Örn: bpt_haber)
-HEDEF_KANALLAR = ['bpthaber', 'solcugazete'] 
+TARGET_CHANNELS = ['bpthaber', 'solcugazete']
+MEDIA_DIR = "downloaded_media"
 
-# Oturum başlatıyoruz (ilk çalıştırdığında sana telefondan onay kodu sorar, sonra kaydeder)
+# Medyaları indireceğimiz klasör yoksa oluştursun
+os.makedirs(MEDIA_DIR, exist_ok=True)
+
 client = TelegramClient('altnhaber', API_ID, API_HASH)
 
-@client.on(events.NewMessage(chats=HEDEF_KANALLAR))
-async def telegram_hortumu(event):
-    """
-    Hedef kanallara yeni mesaj düştüğü milisaniye tetiklenir.
-    """
-    mesaj = event.message.message
+@client.on(events.NewMessage(chats=TARGET_CHANNELS))
+async def telegram_hose(event):
+    message = event.message.message
     
-    # Eğer mesaj boşsa (adamlar sadece fotoğraf/reklam vs. atmışsa) pas geç
-    if not mesaj:
+    # Ne metin ne de medya yoksa siktir et
+    if not message and not event.message.media:
         return
 
-    # Ortak Havuz formatımızı oluşturuyoruz
+    media_path = ""
+    # Aha burası sihrin olduğu yer. Video/Foto ayırmadan indirir!
+    if event.message.media:
+        print("   ⬇️ [DOWNLOAD] Fetching media (Photo/Video)...")
+        media_path = await client.download_media(event.message, MEDIA_DIR)
+        print(f"   ✅ [SAVED] {media_path}")
+
     news_data = {
-        "kaynak_tipi": "TELEGRAM",
-        "kaynak_adi": event.chat.title if event.chat else "Bilinmiyor",
-        "baslik": mesaj.split('\n')[0][:50] + "...",  # Mesajın ilk satırını başlık varsayıyoruz
-        "tam_metin": mesaj,
-        "medya_var_mi": True if event.message.media else False,
-        "cekilen_zaman": event.message.date.strftime("%Y-%m-%d %H:%M:%S")
+        "source_type": "TELEGRAM",
+        "source_name": event.chat.title if event.chat else "Unknown",
+        "title": message.split('\n')[0][:50] + "..." if message else "No Title",
+        "full_text": message or "",
+        "media_url": media_path, # Artık link değil, dosyanın hard diskteki yeri!
+        "fetched_at": event.message.date.strftime("%Y-%m-%d %H:%M:%S")
     }
  
-    print("\n[ŞİPŞAK YAKALANDI] Yeni Haber Düştü!")
-    print(f"Kaynak: {news_data['kaynak_adi']}")
-    print(f"Özet: {news_data['tam_metin'][:100]}...\n") 
- 
-    db_manager.havuza_firlat(news_data)
+    print(f"\n[BINGO] New Drop from {news_data['source_name']}")
+    db_manager.toss_into_pool(news_data)
 
 async def main():
-    print("ALT+N Medya Telegram Ajanı sahaya indi... Kanallar pür dikkat dinleniyor.")
-    # Kodun kapanmadan sürekli dinlemede kalmasını sağlar
+    print("🕵️‍♂️ ALT+N Media Telegram Agent deployed... Monitoring targets.")
     await client.run_until_disconnected()
 
 if __name__ == '__main__':

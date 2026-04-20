@@ -1,57 +1,64 @@
 import sqlite3
+import json
 from datetime import datetime
 
-DB_NAME = "altnhaber.db"
+# Yeni, temiz veritabanımız
+DB_NAME = "altn_media.db"
 
-def veritabanini_kur():
-    """ALT+N Medya'nın kalbini oluşturur."""
-    conn = sqlite3.connect(DB_NAME)
+def setup_database():
+    """Sets up the heart of ALT+N Media."""
+    # timeout=10 is crucial for avoiding 'database is locked' errors during concurrent writes
+    conn = sqlite3.connect(DB_NAME, timeout=10)
+    
+    # Enable WAL mode for better concurrency
+    conn.execute('PRAGMA journal_mode=WAL;')
+    
     c = conn.cursor()
     
-    # Haberleri tutacağımız ana tablo
+    # Main table for the news pool
     c.execute('''
-        CREATE TABLE IF NOT EXISTS haber_havuzu (
+        CREATE TABLE IF NOT EXISTS news_pool (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            grup_id TEXT, -- BAK BURAYI EKLEDİK
-            kaynak_tipi TEXT,
-            kaynak_adi TEXT,
-            orijinal_link TEXT,
-            baslik TEXT,
-            tam_metin TEXT,
-            medya_url TEXT,
-            kategori TEXT DEFAULT 'Bekliyor', 
-            durum TEXT DEFAULT 'Havuzda',
-            cekilen_zaman TEXT
+            group_id TEXT,
+            source_type TEXT,
+            source_name TEXT,
+            original_link TEXT,
+            title TEXT,
+            full_text TEXT,
+            media_url TEXT,
+            category TEXT DEFAULT 'pending',
+            status TEXT DEFAULT 'pending',
+            embedding TEXT, -- VECTOR STORAGE: Saves us money and time
+            fetched_at TEXT
         )
     ''')
     conn.commit()
     conn.close()
-    print("[SİSTEM] Veritabanı ve Bekleme Havuzu jilet gibi hazır.")
+    print("[SYSTEM] Database and Pending Pool are set up like a razor.")
 
-def havuza_firlat(haber_data):
-    """Gelen JSON/Dictionary verisini acımadan veritabanına basar."""
+def toss_into_pool(news_data):
+    """Throws incoming JSON/Dictionary data into the database mercilessly."""
     try:
-        conn = sqlite3.connect(DB_NAME)
+        conn = sqlite3.connect(DB_NAME, timeout=10)
         c = conn.cursor()
         c.execute('''
-            INSERT INTO haber_havuzu 
-            (kaynak_tipi, kaynak_adi, orijinal_link, baslik, tam_metin, medya_url, cekilen_zaman)
+            INSERT INTO news_pool 
+            (source_type, source_name, original_link, title, full_text, media_url, fetched_at)
             VALUES (?, ?, ?, ?, ?, ?, ?)
         ''', (
-            haber_data.get('kaynak_tipi'),
-            haber_data.get('kaynak_adi'),
-            haber_data.get('orijinal_link', ''),
-            haber_data.get('baslik'),
-            haber_data.get('tam_metin'),
-            haber_data.get('medya_url', ''), 
-            haber_data.get('cekilen_zaman')
+            news_data.get('source_type'),
+            news_data.get('source_name'),
+            news_data.get('original_link', ''),
+            news_data.get('title'),
+            news_data.get('full_text'),
+            news_data.get('media_url', ''), 
+            news_data.get('fetched_at')
         ))
         conn.commit()
         conn.close()
-        print(f"[HAVUZ] Veri depoya kilitlendi! Kaynak: {haber_data.get('kaynak_adi')}")
+        print(f"[POOL] Data locked in the vault! Source: {news_data.get('source_name')}")
     except Exception as e:
-        print(f"[HATA] Veritabanına yazarken sıçtık: {e}")
+        print(f"[ERROR] Shit happened while writing to DB: {e}")
 
 if __name__ == "__main__":
-    # Sadece bu dosyayı ilk çalıştırdığında tabloyu kursun diye
-    veritabanini_kur()
+    setup_database()

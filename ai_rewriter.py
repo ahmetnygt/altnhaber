@@ -4,55 +4,51 @@ import sqlite3
 import json
 from openai import OpenAI
  
-# .env dosyasını sisteme yükle
 load_dotenv()
-
-# Key'i kasadan çekiyoruz
 OPENAI_KEY = os.getenv("OPENAI_API_KEY")
 client = OpenAI(api_key=OPENAI_KEY)
 
-DB_NAME = "altnhaber.db"
+DB_NAME = "altn_media.db" # Yeni DB adımız
 
-def ultimate_kurgu_masasi():
-    print("🎬 [FAZ 3] Ultimate Yapay Zeka Kurgu Masası Açıldı...")
-    conn = sqlite3.connect(DB_NAME)
+def ultimate_edit_desk():
+    print("🎬 [PHASE 3] Ultimate AI Edit Desk Opened...")
+    conn = sqlite3.connect(DB_NAME, timeout=10)
     c = conn.cursor()
 
-    # Önce işlem bekleyen benzersiz grup ID'lerini bulalım
-    c.execute("SELECT DISTINCT grup_id FROM haber_havuzu WHERE durum='Harman_Bekliyor'")
-    gruplar = c.fetchall()
+    c.execute("SELECT DISTINCT group_id FROM news_pool WHERE status='awaiting_merge'")
+    groups = c.fetchall()
 
-    if not gruplar:
-        print("🤷‍♂️ Harmanlanacak yeni haber grubu yok.")
+    if not groups:
+        print("🤷‍♂️ No new news groups to merge.")
         return
 
-    for (g_id,) in gruplar:
-        print(f"\n⚙️ GRUP ID [{g_id}] İşleme Alınıyor...")
+    for (g_id,) in groups:
+        print(f"\n⚙️ Processing GROUP ID [{g_id}]...")
         
-        # O gruba ait TÜM haberleri çekiyoruz (1 tane de olabilir, 5 tane de)
-        c.execute("SELECT id, kaynak_adi, baslik, tam_metin, medya_url FROM haber_havuzu WHERE grup_id=?", (g_id,))
-        haberler = c.fetchall()
+        c.execute("SELECT id, source_name, title, full_text, media_url FROM news_pool WHERE group_id=?", (g_id,))
+        news_items = c.fetchall()
         
-        harmanlanacak_metin = ""
-        gorsel_havuzu = [] # Bu diziyi Faz 4'te (Vision kontrolünde) kullanacağız
+        merge_text = ""
+        media_pool = [] 
         
-        for i, h in enumerate(haberler):
-            harmanlanacak_metin += f"--- {i+1}. KAYNAK ({h[1]}) ---\nBAŞLIK: {h[2]}\nMETİN: {h[3]}\n\n"
-            if h[4]: gorsel_havuzu.append(h[4]) # Resim linklerini cebe atıyoruz
+        for i, item in enumerate(news_items):
+            n_id, src, title, txt, media = item
+            merge_text += f"--- SOURCE {i+1} ({src}) ---\nTITLE: {title}\nTEXT: {txt}\n\n"
+            if media: media_pool.append(media) 
             
-        print(f"   📚 {len(haberler)} farklı kaynak birleştiriliyor...")
+        print(f"   📚 Merging {len(news_items)} different sources...")
 
         prompt = f"""
         Sen "ALT+N Medya" adında profesyonel, hızlı ve tarafsız bir Instagram haber sayfasının baş editörüsün.
-        Aşağıda aynı olayı anlatan {len(haberler)} farklı haber kaynağından gelen metinler var. 
+        Aşağıda aynı olayı anlatan {len(news_items)} farklı haber kaynağından gelen metinler var. 
         Senden istediğim bu metinleri HARMANLAYIP, eksik detayları birleştirerek kusursuz, tek bir haber çıkarman.
         
         Bana SADECE şu JSON formatını dön:
-        1. "kategori": Bu haber hangi sayfaya uyar? (Gündem, Ekonomi, Spor, Teknoloji veya Çöp).
-        2. "baslik": Videonun üstüne yazılacak, 4-6 kelimelik çok vurucu başlık.
-        3. "reels_metni": Harmanlanmış, eksiksiz, akıcı, en fazla 3-4 cümlelik özet metin.
+        1. "category": Bu haber hangi sayfaya uyar? (Gündem, Ekonomi, Spor, Teknoloji veya Çöp).
+        2. "title": Videonun üstüne yazılacak, 4-6 kelimelik çok vurucu başlık.
+        3. "reels_text": Harmanlanmış, eksiksiz, akıcı, en fazla 3-4 cümlelik özet metin.
 
-        {harmanlanacak_metin}
+        {merge_text}
         """
 
         try:
@@ -65,39 +61,35 @@ def ultimate_kurgu_masasi():
                 response_format={ "type": "json_object" } 
             )
             
-            ai_cikti = json.loads(response.choices[0].message.content)
-            kategori = ai_cikti.get("kategori", "Gündem")
-            yeni_baslik = ai_cikti.get("baslik", "Başlık Bulunamadı")
-            yeni_metin = ai_cikti.get("reels_metni", "")
+            ai_output = json.loads(response.choices[0].message.content)
+            category = ai_output.get("category", "Gündem")
+            new_title = ai_output.get("title", "No Title")
+            new_text = ai_output.get("reels_text", "")
 
-            if kategori == "Çöp":
-                c.execute("UPDATE haber_havuzu SET durum='Çöpe_Gitti' WHERE grup_id=?", (g_id,))
-                print("   🗑️ Çöp bulundu, tüm grup imha edildi.")
+            if category == "Çöp":
+                c.execute("UPDATE news_pool SET status='trash' WHERE group_id=?", (g_id,))
+                print("   🗑️ Trash detected, group destroyed.")
             else:
-                # O gruptaki sadece ilk haberi "Ultimate_Hazir" yapıyoruz, diğerlerini "Harmanlandi" yapıp gizliyoruz ki Faz 4 şaşırmasın.
-                lider_id = haberler[0][0]
-                
-                # Bütün görsel havuzunu JSON formatında ilk habere kaydedelim ki Faz 4 oradan alsın
-                gorseller_json = json.dumps(gorsel_havuzu)
+                leader_id = news_items[0][0]
+                media_json = json.dumps(media_pool)
 
                 c.execute('''
-                    UPDATE haber_havuzu 
-                    SET kategori=?, baslik=?, tam_metin=?, medya_url=?, durum='Ultimate_Hazir' 
+                    UPDATE news_pool 
+                    SET category=?, title=?, full_text=?, media_url=?, status='ultimate_ready' 
                     WHERE id=?
-                ''', (kategori, yeni_baslik, yeni_metin, gorseller_json, lider_id))
+                ''', (category, new_title, new_text, media_json, leader_id))
                 
-                # Geri kalanları kapat
-                for h in haberler[1:]:
-                    c.execute("UPDATE haber_havuzu SET durum='Harmana_Katildi' WHERE id=?", (h[0],))
+                for item in news_items[1:]:
+                    c.execute("UPDATE news_pool SET status='merged' WHERE id=?", (item[0],))
                 
-                print(f"   ✅ HARMANLANDI! Kategori: {kategori} | Başlık: {yeni_baslik}")
+                print(f"   ✅ MERGED! Category: {category} | Title: {new_title}")
 
         except Exception as e:
-            print(f"   [HATA] OpenAI API sıçtı: {e}")
+            print(f"   [ERROR] OpenAI API fucked up: {e}")
 
     conn.commit()
     conn.close()
-    print("🏆 [FAZ 3 BİTTİ] Harmanlanmış Ultimate Haberler render için hazır!")
+    print("🏆 [PHASE 3 DONE] Ultimate news are ready for render!")
 
 if __name__ == "__main__":
-    ultimate_kurgu_masasi()
+    ultimate_edit_desk()

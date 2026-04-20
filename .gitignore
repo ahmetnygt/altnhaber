@@ -1,5 +1,6 @@
 # Hassas Bilgiler
 .env
+*.session
 
 # Veritabanı (Gereksiz yere GitHub'ı şişirmesin, millet senin DB'yi napacak)
 *.db
