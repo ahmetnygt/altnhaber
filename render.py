@@ -17,28 +17,54 @@ def encode_image(image_path):
         return base64.b64encode(image_file.read()).decode('utf-8')
 
 def vision_agent(media_source):
-    """Hem URL hem yerel dosya destekler. Videoları es geçer."""
-    if str(media_source).lower().endswith(('.mp4', '.avi', '.mov')):
-        print("   🎥 Video detected. Bypassing Vision API, defaulting to center focus.")
-        return False, 50, 50
-
+    """
+    Analyzes both images and videos. For videos, it extracts a single frame 
+    to save API costs and checks for watermarks/logos.
+    """
     print(f"   👁️ Vision Agent deployed, analyzing: {media_source[:30]}...")
     
     try:
-        # Link mi yoksa Telegram'dan inen yerel dosya mı?
-        if media_source.startswith("http"):
-            image_content = {"url": media_source}
+        # Check if the media is a video
+        if str(media_source).lower().endswith(('.mp4', '.avi', '.mov')):
+            print("   🎥 Video detected. Extracting a test frame for the Vision API...")
+            temp_frame = "temp_vision_frame.jpg"
+            
+            try:
+                # Extract a frame from the 1st second (0.0 can be black)
+                with VideoFileClip(media_source) as clip:
+                    # If video is shorter than 1 second, take the middle
+                    t = 1.0 if clip.duration > 1.0 else clip.duration / 2.0
+                    frame = clip.get_frame(t)
+                    Image.fromarray(frame).save(temp_frame)
+                
+                # Encode the extracted frame
+                base64_image = encode_image(temp_frame)
+                image_content = {"url": f"data:image/jpeg;base64,{base64_image}"}
+                
+                # Cleanup the temp frame
+                if os.path.exists(temp_frame):
+                    os.remove(temp_frame)
+                    
+            except Exception as e:
+                print(f"   [ERROR] Frame extraction failed: {e}")
+                return True, 50, 50 # Treat as logo-contaminated if extraction fails
+                
+        # If it's an image (URL or Local)
         else:
-            base64_image = encode_image(media_source)
-            image_content = {"url": f"data:image/jpeg;base64,{base64_image}"}
+            if media_source.startswith("http"):
+                image_content = {"url": media_source}
+            else:
+                base64_image = encode_image(media_source)
+                image_content = {"url": f"data:image/jpeg;base64,{base64_image}"}
 
+        # Send the payload to OpenAI
         response = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
                 {
                     "role": "user",
                     "content": [
-                        {"type": "text", "text": "Sen acımasız bir fotoğraf editörüsün. SADECE JSON dön: {\"has_logo\": true/false, \"focus_x\": 50, \"focus_y\": 30}. Resimde ajans logosu varsa 'has_logo': true yap. Fotoğraf 9:16 kırpılacak, odak x/y yüzdesini ver."},
+                        {"type": "text", "text": "Sen acımasız bir fotoğraf editörüsün. SADECE JSON dön: {\"has_logo\": true/false, \"focus_x\": 50, \"focus_y\": 30}. Resimde ajans logosu veya filigran varsa 'has_logo': true yap. Fotoğraf 9:16 kırpılacak, odak x/y yüzdesini ver."},
                         {"type": "image_url", "image_url": image_content}
                     ]
                 }
@@ -46,12 +72,22 @@ def vision_agent(media_source):
             response_format={ "type": "json_object" },
             max_tokens=80
         )
+        
         output = json.loads(response.choices[0].message.content)
-        return output.get("has_logo", True), output.get("focus_x", 50), output.get("focus_y", 50)
+        
+        # If it was a video, the focus points don't matter much since we center it anyway,
+        # but we definitely care about the 'has_logo' flag.
+        is_contaminated = output.get("has_logo", True)
+        
+        if is_contaminated and str(media_source).lower().endswith(('.mp4', '.avi', '.mov')):
+             print("   ⚠️ [WARNING] Logo detected in the video frame!")
+             
+        return is_contaminated, output.get("focus_x", 50), output.get("focus_y", 50)
+
     except Exception as e:
         print(f"   [ERROR] Vision agent went blind: {e}")
-        return True, 50, 50 
-
+        return True, 50, 50 # Risk almıyoruz, hata verirse çöpe at.
+    
 def create_reels_clip(media_path, video_out_path):
     """Memory leak önleyici try-finally bloğu ile video basımı."""
     clip = None
@@ -81,7 +117,7 @@ def start_production():
     conn = sqlite3.connect(DB_NAME, timeout=10)
     c = conn.cursor()
 
-    c.execute("SELECT id, title, full_text, media_url FROM news_pool WHERE status='ultimate_ready'")
+    c.execute("SELECT id, title, full_text, media_url FROM news_pool WHERE status='render_ready'")
     news_items = c.fetchall()
 
     os.makedirs("render_outputs", exist_ok=True)

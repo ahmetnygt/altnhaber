@@ -1,7 +1,7 @@
 import time
 import subprocess
 from ai_brain import clean_and_group_pool
-from ai_rewriter import ultimate_edit_desk
+from ai_rewriter import ai_edit_desk
 from render import start_production
 import db_manager
 
@@ -25,7 +25,7 @@ def brain_loop():
             clean_and_group_pool()
             
             # 2. Gruplanan haberleri birleştirip tekil, jilet gibi bir metin çıkar
-            ultimate_edit_desk()
+            ai_edit_desk()
             
             # 3. Hazır olan metinlere ve fotoğraflara/videolara reels bas
             start_production()

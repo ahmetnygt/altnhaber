@@ -1,17 +1,18 @@
 import os
-from dotenv import load_dotenv
-import sqlite3
 import json
+import sqlite3
+from datetime import datetime
+from dotenv import load_dotenv
 from openai import OpenAI
  
 load_dotenv()
 OPENAI_KEY = os.getenv("OPENAI_API_KEY")
 client = OpenAI(api_key=OPENAI_KEY)
 
-DB_NAME = "altn_media.db" # Yeni DB adımız
+DB_NAME = "altn_media.db" 
 
-def ultimate_edit_desk():
-    print("🎬 [PHASE 3] Ultimate AI Edit Desk Opened...")
+def ai_edit_desk():
+    print("🎬 [PHASE 3] AI Edit Desk Opened...")
     conn = sqlite3.connect(DB_NAME, timeout=10)
     c = conn.cursor()
 
@@ -70,26 +71,28 @@ def ultimate_edit_desk():
                 c.execute("UPDATE news_pool SET status='trash' WHERE group_id=?", (g_id,))
                 print("   🗑️ Trash detected, group destroyed.")
             else:
-                leader_id = news_items[0][0]
                 media_json = json.dumps(media_pool)
+                current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
+                # YEPYENİ BİR KAYIT AÇIYORUZ
                 c.execute('''
-                    UPDATE news_pool 
-                    SET category=?, title=?, full_text=?, media_url=?, status='ultimate_ready' 
-                    WHERE id=?
-                ''', (category, new_title, new_text, media_json, leader_id))
+                    INSERT INTO news_pool 
+                    (group_id, source_type, source_name, title, full_text, media_url, category, status, fetched_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (g_id, 'AI_AGENT', 'ALT+N', new_title, new_text, media_json, category, 'render_ready', current_time))
                 
-                for item in news_items[1:]:
+                # ESKİ KAYITLARIN HEPSİNİ EMEKLİ EDİYORUZ (Kenarda yatacaklar)
+                for item in news_items:
                     c.execute("UPDATE news_pool SET status='merged' WHERE id=?", (item[0],))
                 
-                print(f"   ✅ MERGED! Category: {category} | Title: {new_title}")
+                print(f"   ✅ MERGED! New Record Created. Category: {category} | Title: {new_title}")
 
         except Exception as e:
             print(f"   [ERROR] OpenAI API fucked up: {e}")
 
     conn.commit()
     conn.close()
-    print("🏆 [PHASE 3 DONE] Ultimate news are ready for render!")
+    print("🏆 [PHASE 3 DONE] News are ready for render!")
 
 if __name__ == "__main__":
-    ultimate_edit_desk()
+    ai_edit_desk()
