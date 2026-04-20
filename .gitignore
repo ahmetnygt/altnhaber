@@ -1,6 +1,8 @@
 # Hassas Bilgiler
 .env
-*.session
+altnhaber.session
+render_outputs/
+downloaded_media/
 
 # Veritabanı (Gereksiz yere GitHub'ı şişirmesin, millet senin DB'yi napacak)
 *.db

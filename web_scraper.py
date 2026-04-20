@@ -1,19 +1,19 @@
 import newspaper
 from newspaper import Article
 from datetime import datetime
+from urllib.parse import quote, urlparse
 
 def extract_news_with_newspaper4k(url):
-    """
-    Verilen URL'deki haberin başlığını, metnini ve ana görselini çeker.
-    Veritabanına yazılmaya hazır standart İNGİLİZCE sözlük formatında döndürür.
-    """
     try:
-        article = Article(url, language='tr') 
-        
+        # Türkçe karakterli URL'leri tarayıcıların anlayacağı formata çeviriyoruz
+        p = urlparse(url)
+        safe_url = p.scheme + "://" + p.netloc + quote(p.path)
+        if p.query: safe_url += "?" + p.query
+
+        article = Article(safe_url, language='tr') 
         article.download()
         article.parse()
         
-        # Aha burası! DB manager'ın beklediği İngilizce key'lerle güncellendi.
         news_data = {
             "source_type": "WEB",
             "source_name": article.meta_site_name if article.meta_site_name else "Unknown",
@@ -24,14 +24,10 @@ def extract_news_with_newspaper4k(url):
             "fetched_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         }
         
-        if len(news_data["full_text"]) < 50:
-            print(f"[WARNING] Yetersiz içerik, pas geçiliyor: {url}")
-            return None
-            
+        if len(news_data["full_text"]) < 50: return None
         return news_data
-
     except Exception as e:
-        print(f"[ERROR] {url} cekilirken sorun olustu: {e}")
+        print(f"[ERROR] {url} çekilirken sorun oluştu: {e}")
         return None
 
 if __name__ == "__main__":
