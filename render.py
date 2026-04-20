@@ -3,14 +3,44 @@ import json
 import sqlite3
 import requests
 from dotenv import load_dotenv
+from openai import OpenAI
 from PIL import Image, ImageDraw, ImageFont
 from moviepy.editor import ImageClip, CompositeVideoClip
 
 load_dotenv()
+# BAK BURAYI SİLMİŞSİN, API OLMADAN YZ ÇALIŞMAZ AMK
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 DB_NAME = "altnhaber.db"
 
+def gorsel_istihbarat_ajani(image_url):
+    """Tek sorguda hem filigranı avlar hem de odak noktasını (X,Y) hesaplar."""
+    print(f"   👁️ Vision Ajanı devrede, fotoğraf röntgenleniyor...")
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "Sen acımasız bir fotoğraf editörüsün. SADECE şu formatta JSON dön: {\"logolu_mu\": true/false, \"odak_x\": 50, \"odak_y\": 30}. KURALLAR: 1) Resimde DHA, AA, İHA gibi ajans logosu veya şeffaf filigran varsa 'logolu_mu': true yap. 2) Bu fotoğraf 9:16 kırpılacak, en önemli objenin/yüzün yatay (x) ve dikey (y) konumunu yüzde olarak ver."},
+                        {"type": "image_url", "image_url": {"url": image_url}}
+                    ]
+                }
+            ],
+            response_format={ "type": "json_object" },
+            max_tokens=80
+        )
+        cikti = json.loads(response.choices[0].message.content)
+        logolu = cikti.get("logolu_mu", True)
+        ox = cikti.get("odak_x", 50)
+        oy = cikti.get("odak_y", 50)
+        return logolu, ox, oy
+    except Exception as e:
+        print(f"   [HATA] Ajan kör oldu, risk almıyoruz: {e}")
+        return True, 50, 50 # Hata verirse logolu say ve pas geç
+
 def metni_satirlara_bol(metin, font, max_genislik):
-    """Metni verilen font ve genişliğe göre akıllıca satırlara ayırır (Word Wrap)."""
+    """Metni verilen font ve genişliğe göre akıllıca satırlara ayırır."""
     kelimeler = metin.split()
     satirlar = []
     gecici_satir = ""
@@ -30,34 +60,33 @@ def sablonu_uzerine_giydir(haber_resim_yolu, sablon_yolu, cikti_yolu, baslik, oz
     arka_plan = Image.open(haber_resim_yolu).convert("RGBA")
     w, h = arka_plan.size
     
-    # Hedef pikseli buluyoruz
+    # AI'dan gelen Hedef pikseli buluyoruz
     odak_x = w * (odak_x_yuzde / 100)
     odak_y = h * (odak_y_yuzde / 100)
 
     oran = 9 / 16
     if w / h > oran:
         yeni_w = int(h * oran)
-        # SİHİR BURADA: Makası odak noktasına göre sağa/sola kaydır
         sol = odak_x - (yeni_w / 2)
-        # Ama resmin dışına taşmasını engelle sike sike sınırlar içinde tut
         sol = max(0, min(sol, w - yeni_w))
         arka_plan = arka_plan.crop((sol, 0, sol + yeni_w, h))
     else:
         yeni_h = int(w / oran)
-        # SİHİR BURADA: Makası odak noktasına göre aşağı/yukarı kaydır
         ust = odak_y - (yeni_h / 2)
         ust = max(0, min(ust, h - yeni_h))
         arka_plan = arka_plan.crop((0, ust, w, ust + yeni_h))
     
     arka_plan = arka_plan.resize((1080, 1920), Image.Resampling.LANCZOS)
 
-    # 2. Şablonu Bindir
+    # Şablonu Bindir (Attığın dosyada adı template.png'ydi, onu kullanıyorum)
     if os.path.exists(sablon_yolu):
         sablon = Image.open(sablon_yolu).convert("RGBA")
         sablon = sablon.resize((1080, 1920), Image.Resampling.LANCZOS)
         arka_plan.paste(sablon, (0, 0), sablon)
+    else:
+        print("⚠️ Şablon bulunamadı! Transparan Canva şablonu eksik.")
 
-    # 3. Yazıları Ekle (Bir önceki sola yatık, gölgesiz Jilet kodun aynısı)
+    # Yazıları Ekle (Sola Yatık, Jilet Gibi)
     draw = ImageDraw.Draw(arka_plan)
     try:
         font_manset = ImageFont.truetype("Antonio-Bold.ttf", 75) 
@@ -96,17 +125,15 @@ def sablonu_uzerine_giydir(haber_resim_yolu, sablon_yolu, cikti_yolu, baslik, oz
     final_img.save(cikti_yolu)
 
 def statik_reels_yap(resim_yolu, video_cikti_yolu):
-    """Hareketsiz ama jilet gibi 5 saniyelik MP4 video."""
     clip = ImageClip(resim_yolu).set_duration(5).set_fps(24)
     final_video = CompositeVideoClip([clip], size=(1080, 1920))
     final_video.write_videofile(video_cikti_yolu, codec="libx264", audio=False, logger=None)
 
 def produksiyona_basla():
-    print("🎥 [FAZ 4] Kurgu Masası: Tipografi ve Şablon Modu Aktif...")
+    print("🎥 [FAZ 4] Yönetmen Koltuğuna Geçildi. Zeka ve Prodüksiyon Aktif...")
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
 
-    # DİKKAT: tam_metin kolonunu da çektik ki 1-2 cümlelik özeti yazdırabilelim
     c.execute("SELECT id, baslik, tam_metin, medya_url FROM haber_havuzu WHERE durum='Ultimate_Hazir'")
     haberler = c.fetchall()
 
@@ -118,31 +145,43 @@ def produksiyona_basla():
         
         try:
             gorseller = json.loads(medya_json)
-            secilen_url = next((url for url in gorseller if isinstance(url, str) and url.startswith("http")), None)
-            
+            secilen_url = None
+            o_x, o_y = 50, 50
+
+            # Temiz fotoğrafı ve odağı bulana kadar AI'ı yoruyoruz
+            for url in gorseller:
+                if not isinstance(url, str) or not url.startswith("http"): continue 
+                
+                logolu_mu, ox, oy = gorsel_istihbarat_ajani(url)
+                
+                if not logolu_mu:
+                    print(f"   ✅ Temiz görsel bulundu! Odak Kilitlendi -> X:%{ox} Y:%{oy}")
+                    secilen_url = url
+                    o_x, o_y = ox, oy
+                    break
+                else:
+                    print("   ❌ Logolu çıktı, sıradakine geçiliyor...")
+
             if secilen_url:
                 temp_raw = f"render_ciktilari/raw_{h_id}.jpg"
                 hazir_frame = f"render_ciktilari/frame_{h_id}.jpg"
                 video_out = f"render_ciktilari/altn_reels_{h_id}.mp4"
 
-                # 1. Fotoğrafı indir
                 r = requests.get(secilen_url)
                 with open(temp_raw, 'wb') as f: f.write(r.content)
 
-                # 2. Şablonu, Kırmızı Manşeti ve Özeti Bindir
-                sablonu_uzerine_giydir(temp_raw, "template.png", hazir_frame, baslik, ozet_metni)
+                # Şablonu giydirirken AI'ın verdiği koordinatları (o_x, o_y) basıyoruz!
+                sablonu_uzerine_giydir(temp_raw, "template.png", hazir_frame, baslik, ozet_metni, o_x, o_y)
 
-                # 3. Videoya (MP4) çevir
                 statik_reels_yap(hazir_frame, video_out)
                 
                 c.execute("UPDATE haber_havuzu SET durum='Yayin_Bekliyor' WHERE id=?", (h_id,))
                 print(f"✅ ŞAHESER HAZIR: {video_out}")
                 
-                # Çöpleri sil
                 os.remove(temp_raw)
                 os.remove(hazir_frame)
             else:
-                print("❌ Görsel bulunamadı, pas geçiliyor.")
+                print("❌ İşe yarar temiz görsel bulunamadı, pas geçiliyor.")
         except Exception as e:
             print(f"💥 Hata: {e}")
 

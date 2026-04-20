@@ -14,6 +14,7 @@ RSS_KAYNAKLARI = [
     "https://feeds.bbci.co.uk/turkce/rss.xml",
     "https://rss.dw.com/xml/rss-tur-all"
 ]
+# GDH,BLOB
 
 def orumcek_mesaisi():
     print("🕸️ [ÖRÜMCEK] RSS Tarayıcı sahaya indi, ağlar atılıyor...")
