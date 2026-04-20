@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 from openai import OpenAI
 from PIL import Image, ImageDraw, ImageFont
 from moviepy.editor import ImageClip, VideoFileClip, CompositeVideoClip
+from publisher_agent import publish_single_item
 
 load_dotenv()
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
