@@ -1,6 +1,6 @@
 # Hassas Bilgiler
 .env
-altnhaber.session
+*.session
 render_outputs/
 downloaded_media/
 

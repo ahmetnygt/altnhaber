@@ -9,7 +9,7 @@ load_dotenv()
 API_ID = int(os.getenv("TELEGRAM_API_ID"))
 API_HASH = os.getenv("TELEGRAM_API_HASH")
 DB_NAME = "altn_media.db"
-TARGET_CHAT = 'altnhaber_test' # Buraya kendi username'ini veya test grubunu yazabilirsin
+TARGET_CHAT = '@altnhaber_test' # Buraya kendi username'ini veya test grubunu yazabilirsin
 
 async def run_publisher():
     print("📤 [PUBLISHER] Yayına hazır içerikler taranıyor...")
