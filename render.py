@@ -6,7 +6,7 @@ import base64
 from dotenv import load_dotenv
 from openai import OpenAI
 from PIL import Image, ImageDraw, ImageFont
-from moviepy.editor import ImageClip, VideoFileClip, CompositeVideoClip
+from moviepy.editor import ImageClip, VideoFileClip, CompositeVideoClip, ColorClip
 from publisher_agent import publish_single_item
 
 load_dotenv()
@@ -87,14 +87,38 @@ def create_transparent_overlay(title, summary, overlay_out_path):
     start_y = 1480 - total_text_height
     current_y = start_y
 
+    # GÖRSEL OKUNABİLİRLİK İÇİN GRADIENT (KARARTMA) EKLENTİSİ
+    # Metnin başlayacağı yerden biraz daha yukarıdan başlayarak en alta kadar siyahlaşan bir efekt
+    grad_start = max(0, start_y - 150)
+    for y in range(int(grad_start), 1920):
+        # 0'dan 230'a kadar (neredeyse tam siyah) yumuşak geçiş
+        alpha = int(230 * ((y - grad_start) / (1920 - grad_start))) 
+        draw.line([(0, y), (1080, y)], fill=(0, 0, 0, alpha))
+
+    # BAŞLIK (Daha parlak kırmızı ve siyah çerçeve ile)
     for line in title_lines:
-        draw.text((x_left_margin, current_y), line, font=font_title, fill=(214, 40, 40, 255))
+        draw.text(
+            (x_left_margin, current_y), 
+            line, 
+            font=font_title, 
+            fill=(255, 30, 30, 255), # Çok daha parlak neon bir kırmızı
+            stroke_width=4,          # Kalın siyah dış çerçeve
+            stroke_fill=(0, 0, 0, 255)
+        )
         current_y += h_title + line_spacing_title
 
     current_y += 35 # Başlık ile özet arası ekstra boşluk
 
+    # ÖZET METNİ (Siyah çerçeve ile)
     for line in summary_lines:
-        draw.text((x_left_margin, current_y), line, font=font_summary, fill=(255, 255, 255, 255))
+        draw.text(
+            (x_left_margin, current_y), 
+            line, 
+            font=font_summary, 
+            fill=(255, 255, 255, 255),
+            stroke_width=2,         # Okunabilirliği artırmak için ince çerçeve
+            stroke_fill=(0, 0, 0, 255)
+        )
         current_y += h_summary + line_spacing_summary
 
     overlay.save(overlay_out_path, "PNG")
@@ -135,7 +159,7 @@ def vision_agent(media_source):
                 {
                     "role": "user",
                     "content": [
-                        {"type": "text", "text": "Sen acımasız bir fotoğraf editörüsün. SADECE JSON dön: {\"has_logo\": true/false, \"focus_x\": 50, \"focus_y\": 30}. Resimde ajans logosu veya filigran varsa 'has_logo': true yap. Fotoğraf 9:16 kırpılacak, odak x/y yüzdesini ver."},
+                        {"type": "text", "text": "Sen acımasız bir fotoğraf editörüsün. SADECE JSON dön: {\"logo_severity\": 0, \"focus_x\": 50, \"focus_y\": 30}. Resimde veya videoda ajans logosu, haber alt bandı veya filigran YOKSA 0 ver. VARSA büyüklüğüne ve rahatsız ediciliğine göre 1 ile 10 arası bir puan ver."},
                         {"type": "image_url", "image_url": image_content}
                     ]
                 }
@@ -144,10 +168,8 @@ def vision_agent(media_source):
             max_tokens=80
         )
         output = json.loads(response.choices[0].message.content)
-        is_contaminated = output.get("has_logo", True)
-        if is_contaminated and str(media_source).lower().endswith(('.mp4', '.avi', '.mov')):
-             print("   ⚠️ [WARNING] Logo detected in the video frame! Trashing it.")
-        return is_contaminated, output.get("focus_x", 50), output.get("focus_y", 50)
+        severity = output.get("logo_severity", 0) # Logoyu 0-10 arası puanlar
+        return severity, output.get("focus_x", 50), output.get("focus_y", 50)
 
     except Exception as e:
         print(f"   [ERROR] Vision agent went blind: {e}")
@@ -160,19 +182,21 @@ def create_reels_clip(media_path, overlay_path, video_out_path):
     final_video = None
     try:
         # 1. Base Medyayı Ayarla (Alt Katman)
-        if media_path.lower().endswith(('.mp4', '.avi', '.mov')):
+        if media_path == "BLACK_BG":
+            # Hiçbir şey bulunamazsa düz siyah (koyu antrasit) arkaplan oluştur
+            base_clip = ColorClip(size=(1080, 1920), color=(15, 15, 15)).set_duration(5).set_fps(24)
+        elif media_path.lower().endswith(('.mp4', '.avi', '.mov')):
             base_clip = VideoFileClip(media_path)
             if base_clip.duration > 15:
                 base_clip = base_clip.subclip(0, 15)
-            # Videoyu dik boyuta oturt ve ortala
-            base_clip = base_clip.resize(height=1920) 
+            # Videoyu GENİŞLİĞE göre oturt
+            base_clip = base_clip.resize(width=1080) 
             base_clip = base_clip.set_position(("center", "center"))
         else:
-            # Resimse 5 saniyelik statik video yap
             base_clip = ImageClip(media_path).set_duration(5).set_fps(24)
-            # Burada AI'dan gelen focus_x, focus_y ile crop yapabilirsin, şimdilik merkeze oturtuyoruz
-            base_clip = base_clip.resize(height=1920)
-            base_clip = base_clip.set_position(("center", "center"))
+            # Yüksekliğe değil, GENİŞLİĞE göre boyutlandır ki yüzler kesilmesin
+            base_clip = base_clip.resize(width=1080)
+            base_clip = base_clip.set_position(("center", "top"))
             
         # 2. Transparan Şablonu Ayarla (Üst Katman)
         overlay_clip = ImageClip(overlay_path).set_duration(base_clip.duration)
@@ -211,20 +235,39 @@ def start_production():
             selected_media = None
             o_x, o_y = 50, 50
 
-            # 2. Temiz medya bulana kadar havuzu deşiyoruz
+            # 2. Medya önceliklendirme: Video > Resim > Siyah Ekran
+            media_stats = []
             for media in media_list:
                 if not media: continue
-                
-                has_logo, ox, oy = vision_agent(media) #
-                
-                if not has_logo:
-                    print(f"   ✅ Clean media found! Focus Locked -> X:%{ox} Y:%{oy}")
-                    selected_media = media
-                    o_x, o_y = ox, oy
-                    break
-                else:
-                    print("   ❌ Logo detected, skipping to next media...")
+                is_video = str(media).lower().endswith(('.mp4', '.avi', '.mov'))
+                severity, ox, oy = vision_agent(media)
+                media_stats.append({
+                    'path': media,
+                    'is_video': is_video,
+                    'severity': severity,
+                    'ox': ox, 'oy': oy
+                })
 
+            videos = [m for m in media_stats if m['is_video']]
+            images = [m for m in media_stats if not m['is_video']]
+
+            # KARAR AĞACI: Önce Videolar (Logosu en az olan), Yoksa Fotoğraflar, O da Yoksa Siyah Ekran
+            if videos:
+                videos.sort(key=lambda x: x['severity']) # Logosu en az olan videoyu öne al
+                selected_media = videos[0]['path']
+                o_x, o_y = videos[0]['ox'], videos[0]['oy']
+                print(f"   🎥 Video Seçildi! Logo Şiddeti: {videos[0]['severity']}/10")
+            elif images:
+                images.sort(key=lambda x: x['severity']) # Logosu en az olan fotoğrafı öne al
+                selected_media = images[0]['path']
+                o_x, o_y = images[0]['ox'], images[0]['oy']
+                print(f"   🖼️ Fotoğraf Seçildi! Logo Şiddeti: {images[0]['severity']}/10")
+            else:
+                print("   ⚠️ Hiç medya bulunamadı! Siyah arka plan kullanılacak.")
+                selected_media = "BLACK_BG"
+                o_x, o_y = 50, 50
+
+            # --- DÜZELTİLEN KISIM BURASI (Girintiler geri çekildi ve değişkenler eklendi) ---
             if selected_media:
                 temp_raw = f"render_outputs/raw_{n_id}.jpg" 
                 temp_overlay = f"render_outputs/overlay_{n_id}.png"
@@ -232,8 +275,10 @@ def start_production():
                 masterpiece_ready = False
 
                 try:
-                    # Medya URL (RSS) ise indir, yerel yol (Telegram) ise direkt kullan
-                    if selected_media.startswith("http"):
+                    # Medya "BLACK_BG" ise indirme yapma, URL (RSS) ise indir, yerel yol (Telegram) ise direkt kullan
+                    if selected_media == "BLACK_BG":
+                        active_media_path = "BLACK_BG"
+                    elif selected_media.startswith("http"):
                         r = requests.get(selected_media)
                         with open(temp_raw, 'wb') as f: f.write(r.content)
                         active_media_path = temp_raw
@@ -265,12 +310,31 @@ def start_production():
                         os.remove(temp_raw)
                     if os.path.exists(temp_overlay):
                         os.remove(temp_overlay)
-            else:
-                print("❌ No clean media found. Skipping.")
+        
         except Exception as e:
             print(f"💥 Error in production for ID {n_id}: {e}")
 
     print("🏆 [PHASE 4 DONE] Production cycle finished.")
     
+def test_render():
+    print("🧪 [TEST] Tasarım ve siyah arkaplan test ediliyor...")
+    os.makedirs("render_outputs", exist_ok=True)
+    
+    title = "CUMHURBAŞKANI'NDAN ÇOK ÖNEMLİ AÇIKLAMA GELDİ"
+    summary = "Cumhurbaşkanı, yaptığı son dakika açıklamasında yeni paketin detaylarını paylaştı. Herkesin gözü buradaydı."
+    
+    temp_overlay = "render_outputs/test_overlay.png"
+    video_out = "render_outputs/test_output.mp4"
+    
+    try:
+        # Bir önceki mesajda yaptığımız gradient'li yeni fonksiyonu çağırır
+        create_transparent_overlay(title, summary, temp_overlay)
+        # Siyah ekranı direkt teste sokar
+        create_reels_clip("BLACK_BG", temp_overlay, video_out)
+        print(f"✅ TEST BAŞARILI. Lütfen render_outputs içindeki '{video_out}' dosyasını izle.")
+    except Exception as e:
+        print(f"❌ TEST SIRASINDA HATA: {e}")
+
 if __name__ == "__main__":
-    start_production()
+    start_production()  #<-- Normalde bu çalışıyordu, test için yoruma aldık
+    # test_render()         # <-- Sadece bu çalışacak

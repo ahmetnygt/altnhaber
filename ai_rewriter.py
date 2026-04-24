@@ -47,8 +47,7 @@ def ai_edit_desk():
         Bana SADECE şu JSON formatını dön:
         1. "category": Bu haber hangi sayfaya uyar? (Gündem, Ekonomi, Spor, Teknoloji veya Çöp).
         2. "title": Videonun üstüne yazılacak, 4-6 kelimelik çok vurucu başlık.
-        3. "reels_text": Harmanlanmış, eksiksiz, akıcı, en fazla 3-4 cümlelik özet metin.
-
+        3. "reels_text": Harmanlanmış, akıcı, SADECE 1 veya en fazla 2 kısa cümleden oluşan, maksimum 150 karakterlik çok vurucu özet metin.
         {merge_text}
         """
 
