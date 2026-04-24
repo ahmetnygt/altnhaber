@@ -125,27 +125,24 @@ def create_transparent_overlay(title, summary, overlay_out_path):
     return overlay_out_path
 
 def vision_agent(media_source):
-    """Video gelirse 1. saniyesinden frame alıp logoyu tarar, API parasını sömürmez."""
     print(f"   👁️ Vision Agent deployed, analyzing: {media_source[:30]}...")
-    
     try:
         if str(media_source).lower().endswith(('.mp4', '.avi', '.mov')):
-            print("   🎥 Video detected. Extracting a test frame for the Vision API...")
+            print("   🎥 Video detected. Extracting Golden Frame for Vision API...")
             temp_frame = "temp_vision_frame.jpg"
-            
             try:
                 with VideoFileClip(media_source) as clip:
-                    t = 1.0 if clip.duration > 1.0 else clip.duration / 2.0
+                    # ALTIN KARE: Videonun tam ortasından kare alıyoruz!
+                    t = clip.duration / 2.0
                     frame = clip.get_frame(t)
                     Image.fromarray(frame).save(temp_frame)
                 
                 base64_image = encode_image(temp_frame)
                 image_content = {"url": f"data:image/jpeg;base64,{base64_image}"}
-                
                 if os.path.exists(temp_frame): os.remove(temp_frame)
             except Exception as e:
                 print(f"   [ERROR] Frame extraction failed: {e}")
-                return True, 50, 50 
+                return 10, 50, 50 
         else:
             if media_source.startswith("http"):
                 image_content = {"url": media_source}
@@ -168,41 +165,48 @@ def vision_agent(media_source):
             max_tokens=80
         )
         output = json.loads(response.choices[0].message.content)
-        severity = output.get("logo_severity", 0) # Logoyu 0-10 arası puanlar
+        severity = output.get("logo_severity", 0) 
+        
         return severity, output.get("focus_x", 50), output.get("focus_y", 50)
 
     except Exception as e:
         print(f"   [ERROR] Vision agent went blind: {e}")
-        return True, 50, 50 
+        return 10, 50, 50
 
-def create_reels_clip(media_path, overlay_path, video_out_path):
-    """Base medyayı (Video/Resim) alta koyar, Transparan Şablonu üstüne yapıştırır."""
+def create_reels_clip(media_path, overlay_path, video_out_path, ox=50):
+    """Medyayı yapay zekanın odak noktasına (ox) göre akıllıca keser (Auto-Reframe)."""
     base_clip = None
     overlay_clip = None
     final_video = None
     try:
-        # 1. Base Medyayı Ayarla (Alt Katman)
         if media_path == "BLACK_BG":
-            # Hiçbir şey bulunamazsa düz siyah (koyu antrasit) arkaplan oluştur
             base_clip = ColorClip(size=(1080, 1920), color=(15, 15, 15)).set_duration(5).set_fps(24)
         elif media_path.lower().endswith(('.mp4', '.avi', '.mov')):
             base_clip = VideoFileClip(media_path)
             if base_clip.duration > 15:
                 base_clip = base_clip.subclip(0, 15)
-            # Videoyu GENİŞLİĞE göre oturt
-            base_clip = base_clip.resize(width=1080) 
-            base_clip = base_clip.set_position(("center", "center"))
+            
+            # Yüksekliği 1920'ye kilitle, bırak genişlik ne kadar taşıyorsa taşsın
+            base_clip = base_clip.resize(height=1920)
+            
+            # AI'ın % odak noktasını piksele çevir ve siyah bar çıkmasını engelle (Safe Math)
+            target_x = (ox / 100.0) * base_clip.w
+            target_x = max(540, min(target_x, base_clip.w - 540))
+            
+            # Ortayı hedef alarak 1080x1920 tam ekran kes!
+            base_clip = base_clip.crop(x_center=target_x, y_center=base_clip.h/2, width=1080, height=1920)
         else:
             base_clip = ImageClip(media_path).set_duration(5).set_fps(24)
-            # Yüksekliğe değil, GENİŞLİĞE göre boyutlandır ki yüzler kesilmesin
-            base_clip = base_clip.resize(width=1080)
-            base_clip = base_clip.set_position(("center", "top"))
+            base_clip = base_clip.resize(height=1920)
             
-        # 2. Transparan Şablonu Ayarla (Üst Katman)
+            target_x = (ox / 100.0) * base_clip.w
+            target_x = max(540, min(target_x, base_clip.w - 540))
+            
+            base_clip = base_clip.crop(x_center=target_x, y_center=base_clip.h/2, width=1080, height=1920)
+            
         overlay_clip = ImageClip(overlay_path).set_duration(base_clip.duration)
         overlay_clip = overlay_clip.set_position(("center", "center"))
             
-        # 3. İkisini Üst Üste Bindir!
         final_video = CompositeVideoClip([base_clip, overlay_clip], size=(1080, 1920))
         final_video.write_videofile(video_out_path, codec="libx264", audio=False, logger=None)
     finally:
@@ -213,10 +217,10 @@ def create_reels_clip(media_path, overlay_path, video_out_path):
 def start_production():
     print("🎥 [PHASE 4] Director's Chair. AI and Production Active...")
     
-    # 1. Önce listeyi alıyoruz ve veritabanı kilitlenmesin diye BAĞLANTIYI HEMEN KAPATIYORUZ
+    # 1. Önce listeyi alıyoruz (caption sütunu da eklendi)
     conn = sqlite3.connect(DB_NAME, timeout=30)
     c = conn.cursor()
-    c.execute("SELECT id, title, full_text, media_url FROM news_pool WHERE status='render_ready'")
+    c.execute("SELECT id, title, full_text, caption, media_url FROM news_pool WHERE status='render_ready'")
     news_items = c.fetchall()
     conn.close() 
 
@@ -227,7 +231,8 @@ def start_production():
     os.makedirs("render_outputs", exist_ok=True)
 
     for item in news_items:
-        n_id, title, summary, media_json = item
+        # Yeni sıralama: summary (kısa metin), caption_text (uzun açıklama)
+        n_id, title, summary, caption_text, media_json = item 
         print(f"\n🎬 Processing: {title[:40]}...")
         
         try:
@@ -235,7 +240,7 @@ def start_production():
             selected_media = None
             o_x, o_y = 50, 50
 
-            # 2. Medya önceliklendirme: Video > Resim > Siyah Ekran
+            # 2. Medya Analizi ve Karar Ağacı
             media_stats = []
             for media in media_list:
                 if not media: continue
@@ -251,31 +256,28 @@ def start_production():
             videos = [m for m in media_stats if m['is_video']]
             images = [m for m in media_stats if not m['is_video']]
 
-            # KARAR AĞACI: Önce Videolar (Logosu en az olan), Yoksa Fotoğraflar, O da Yoksa Siyah Ekran
             if videos:
-                videos.sort(key=lambda x: x['severity']) # Logosu en az olan videoyu öne al
+                videos.sort(key=lambda x: x['severity']) 
                 selected_media = videos[0]['path']
                 o_x, o_y = videos[0]['ox'], videos[0]['oy']
-                print(f"   🎥 Video Seçildi! Logo Şiddeti: {videos[0]['severity']}/10")
+                print(f"   🎥 Video Seçildi! Logo Şiddeti: {videos[0]['severity']}/10 (Odak: X%{o_x})")
             elif images:
-                images.sort(key=lambda x: x['severity']) # Logosu en az olan fotoğrafı öne al
+                images.sort(key=lambda x: x['severity']) 
                 selected_media = images[0]['path']
                 o_x, o_y = images[0]['ox'], images[0]['oy']
-                print(f"   🖼️ Fotoğraf Seçildi! Logo Şiddeti: {images[0]['severity']}/10")
+                print(f"   🖼️ Fotoğraf Seçildi! Logo Şiddeti: {images[0]['severity']}/10 (Odak: X%{o_x})")
             else:
                 print("   ⚠️ Hiç medya bulunamadı! Siyah arka plan kullanılacak.")
                 selected_media = "BLACK_BG"
                 o_x, o_y = 50, 50
 
-            # --- DÜZELTİLEN KISIM BURASI (Girintiler geri çekildi ve değişkenler eklendi) ---
             if selected_media:
                 temp_raw = f"render_outputs/raw_{n_id}.jpg" 
                 temp_overlay = f"render_outputs/overlay_{n_id}.png"
                 video_out = f"render_outputs/altn_reels_{n_id}.mp4"
-                masterpiece_ready = False
 
                 try:
-                    # Medya "BLACK_BG" ise indirme yapma, URL (RSS) ise indir, yerel yol (Telegram) ise direkt kullan
+                    # Medya BLACK_BG ise indirme yapma
                     if selected_media == "BLACK_BG":
                         active_media_path = "BLACK_BG"
                     elif selected_media.startswith("http"):
@@ -288,24 +290,19 @@ def start_production():
                     # 3. Transparan şablonu ve yazıları üret
                     create_transparent_overlay(title, summary, temp_overlay)
 
-                    # 4. Render motorunu ateşle
-                    create_reels_clip(active_media_path, temp_overlay, video_out)
-                    masterpiece_ready = True
+                    # 4. Render motorunu ateşle (Yapay zekanın odak noktasıyla!)
+                    create_reels_clip(active_media_path, temp_overlay, video_out, ox=o_x)
                     
-                    # 5. Render bittiği an durumunu güncelle (Granüler bağlantı)
                     conn = sqlite3.connect(DB_NAME, timeout=30)
                     conn.execute("UPDATE news_pool SET status='published' WHERE id=?", (n_id,))
                     conn.commit()
                     conn.close()
                     
                     print(f"✅ MASTERPIECE READY: {video_out}")
-
-                    # 6. BEKLEME YAPMA, HEMEN TELEGRAM'A FIRLAT!
                     print(f"📤 Render bitti, {n_id} hemen yayına gidiyor...")
-                    publish_single_item(n_id, title, summary)
+                    publish_single_item(n_id, title, caption_text) # <-- BURAYI DEĞİŞTİRDİK
                 
                 finally:
-                    # Arkada çöp bırakmıyoruz, try-finally ile her durumda temizlik
                     if os.path.exists(temp_raw) and temp_raw == active_media_path:
                         os.remove(temp_raw)
                     if os.path.exists(temp_overlay):

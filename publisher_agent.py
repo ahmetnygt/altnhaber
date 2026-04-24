@@ -27,18 +27,19 @@ async def run_publisher():
     c = conn.cursor()
     
     # Sadece renderlanmış ama henüz test edilmemiş videoları çek
-    c.execute("SELECT id, title, full_text FROM news_pool WHERE status='published'")
+    c.execute("SELECT id, title, caption FROM news_pool WHERE status='published'")
     items = c.fetchall()
 
     if not items:
         print("🤷‍♂️ [PUBLISHER] Paylaşılacak taze mal yok.")
     else:
-        for n_id, title, summary in items:
+        for n_id, title, caption_text in items: # summary yerine caption_text oldu
             video_path = f"render_outputs/altn_reels_{n_id}.mp4"
 
             if os.path.exists(video_path):
                 print(f"🚀 [Ateşleniyor] {title[:30]}...")
-                caption = f"🎬 **{title}**\n\n{summary}\n\n🤖 *ALT+N Media Production Pipeline Test*"
+                # Telegram'a giden uzun metin
+                caption = f"🎬 **{title}**\n\n{caption_text}\n\n🤖 *ALT+N Media Production Pipeline Test*"
                 
                 try:
                     await client.send_file(TARGET_CHAT, video_path, caption=caption, supports_streaming=True)
@@ -53,7 +54,8 @@ async def run_publisher():
     conn.close()
     await client.disconnect()
     
-async def run_single_publisher(n_id, title, summary):
+# Argümanları caption_text olarak değiştirdik
+async def run_single_publisher(n_id, title, caption_text):
     client = TelegramClient('altnhaber', API_ID, API_HASH)
     await client.connect()
     
@@ -63,7 +65,7 @@ async def run_single_publisher(n_id, title, summary):
 
     video_path = f"render_outputs/altn_reels_{n_id}.mp4"
     if os.path.exists(video_path):
-        caption = f"🎬 **{title}**\n\n{summary}\n\n🤖 *ALT+N Media Pipeline*"
+        caption = f"🎬 **{title}**\n\n{caption_text}\n\n🤖 *ALT+N Media Pipeline*"
         try:
             await client.send_file(TARGET_CHAT, video_path, caption=caption, supports_streaming=True)
             # Yayın bittiği an DB'yi kilitlemeden güncelle
@@ -77,8 +79,8 @@ async def run_single_publisher(n_id, title, summary):
     
     await client.disconnect()
 
-def publish_single_item(n_id, title, summary):
-    asyncio.run(run_single_publisher(n_id, title, summary))
+def publish_single_item(n_id, title, caption_text):
+    asyncio.run(run_single_publisher(n_id, title, caption_text))
 
 def start_publishing():
     """Main döngüsünden çağrılacak olan senkron wrapper."""

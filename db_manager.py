@@ -25,6 +25,7 @@ def setup_database():
             original_link TEXT,
             title TEXT,
             full_text TEXT,
+            caption TEXT, -- YENİ EKLENEN SÜTUN (Açıklama paragrafı için)
             media_url TEXT,
             category TEXT DEFAULT 'pending',
             status TEXT DEFAULT 'pending',
@@ -32,6 +33,7 @@ def setup_database():
             fetched_at TEXT
         )
     ''')
+    
     conn.commit()
     conn.close()
     print("[SYSTEM] Database and Pending Pool are set up like a razor.")

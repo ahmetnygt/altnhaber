@@ -39,24 +39,28 @@ def ai_edit_desk():
             
         print(f"   📚 Merging {len(news_items)} different sources...")
 
-        prompt = f"""
+        # 1. SİSTEM ROLÜ (Kimlik, Kurallar ve Format)
+        system_prompt = """
         Sen "ALT+N Medya" adında profesyonel, hızlı ve tarafsız bir Instagram haber sayfasının baş editörüsün.
-        Aşağıda aynı olayı anlatan {len(news_items)} farklı haber kaynağından gelen metinler var. 
-        Senden istediğim bu metinleri HARMANLAYIP, eksik detayları birleştirerek kusursuz, tek bir haber çıkarman.
+        Görevin, sana gönderilen farklı kaynaklardaki haber metinlerini HARMANLAYIP, eksik detayları birleştirerek kusursuz, tek bir haber çıkarmaktır.
         
         Bana SADECE şu JSON formatını dön:
         1. "category": Bu haber hangi sayfaya uyar? (Gündem, Ekonomi, Spor, Teknoloji veya Çöp).
         2. "title": Videonun üstüne yazılacak, 4-6 kelimelik çok vurucu başlık.
-        3. "reels_text": Harmanlanmış, akıcı, SADECE 1 veya en fazla 2 kısa cümleden oluşan, maksimum 150 karakterlik çok vurucu özet metin.
-        {merge_text}
+        3. "reels_text": Videonun/Fotoğrafın ÜZERİNE basılacak; SADECE 1 veya en fazla 2 kısa cümleden oluşan, maksimum 150 karakterlik vurucu özet metin.
+        4. "caption_text": Instagram veya Telegram'da gönderinin AÇIKLAMA kısmına yazılacak; haberin tüm detaylarını içeren, 3-4 cümlelik, doyurucu ve akıcı detay paragrafı.
         """
+        
+        # 2. KULLANICI ROLÜ (Sadece işlenecek ham veri)
+        user_prompt = f"İşte harmanlaman gereken {len(news_items)} farklı haber kaynağı:\n\n{merge_text}"
 
         try:
             response = client.chat.completions.create(
                 model="gpt-4o-mini",
+                temperature=0.3, # Habere yorum katmaması için düşük temperature
                 messages=[
-                    {"role": "system", "content": "Sen sadece istenilen formatta JSON üreten bir yapay zeka editörüsün."},
-                    {"role": "user", "content": prompt}
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
                 ],
                 response_format={ "type": "json_object" } 
             )
@@ -64,7 +68,8 @@ def ai_edit_desk():
             ai_output = json.loads(response.choices[0].message.content)
             category = ai_output.get("category", "Gündem")
             new_title = ai_output.get("title", "No Title")
-            new_text = ai_output.get("reels_text", "")
+            new_reels_text = ai_output.get("reels_text", "")
+            new_caption_text = ai_output.get("caption_text", new_reels_text) # Yapay zeka unutursa fallback olarak reels texti al
 
             if category == "Çöp":
                 c.execute("UPDATE news_pool SET status='trash' WHERE group_id=?", (g_id,))
@@ -73,17 +78,18 @@ def ai_edit_desk():
                 media_json = json.dumps(media_pool)
                 current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-                # YEPYENİ BİR KAYIT AÇIYORUZ
+                # YEPYENİ BİR KAYIT AÇIYORUZ (caption sütunuyla birlikte)
+                # reels_text -> videonun üzerine basılacağı için full_text sütununa gidiyor
+                # caption_text -> Telegram'a gideceği için caption sütununa gidiyor
                 c.execute('''
                     INSERT INTO news_pool 
-                    (group_id, source_type, source_name, title, full_text, media_url, category, status, fetched_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ''', (g_id, 'AI_AGENT', 'ALT+N', new_title, new_text, media_json, category, 'render_ready', current_time))
+                    (group_id, source_type, source_name, title, full_text, caption, media_url, category, status, fetched_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (g_id, 'AI_AGENT', 'ALT+N', new_title, new_reels_text, new_caption_text, media_json, category, 'render_ready', current_time))
                 
                 # ESKİ KAYITLARIN HEPSİNİ EMEKLİ EDİYORUZ (Kenarda yatacaklar)
                 for item in news_items:
-                    c.execute("UPDATE news_pool SET status='merged' WHERE id=?", (item[0],))
-                
+                    c.execute("UPDATE news_pool SET status='merged' WHERE id=?", (item[0],))                
                 print(f"   ✅ MERGED! New Record Created. Category: {category} | Title: {new_title}")
 
         except Exception as e:
