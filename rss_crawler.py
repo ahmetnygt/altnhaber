@@ -1,6 +1,7 @@
 import feedparser
 import time
 import sqlite3
+from calendar import timegm
 from web_scraper import extract_news_with_newspaper4k # Bunu da sonra refactor ederiz
 import db_manager
 
@@ -25,13 +26,25 @@ def spider_shift():
     print("🕸️ [SPIDER] RSS Crawler hit the field, casting webs...")
     
     while True:
+        # Son 5 dakika (300 saniye). Ancak RSS'lerin bazen geç güncellenme 
+        # ihtimaline karşı 2 dakika da "güvenlik payı" (buffer) bırakıp son 7 dakikayı tarıyoruz.
+        # Merak etme, is_link_processed sayesinde aynı haberi 2 kez DB'ye kaydetmez.
+        time_limit = time.time() - (7 * 60) 
+        
         for rss_url in RSS_SOURCES:
             try:
                 feed = feedparser.parse(rss_url)
                 print(f"[SCANNING] {rss_url} ({len(feed.entries)} items found)")
                 
-                # Sadece en taze 5 habere bakıyoruz
-                for entry in feed.entries[:5]:
+                # Artık [:5] yok, tüm listeyi tarıyor ama SADECE son 7 dakikada yayınlananları alıyor!
+                for entry in feed.entries:
+                    
+                    # Haber yayınlanma saatini kontrol et
+                    if hasattr(entry, 'published_parsed') and entry.published_parsed:
+                        entry_time = timegm(entry.published_parsed)
+                        if entry_time < time_limit:
+                            continue # Haber eski, direkt atla ve zaman kazan
+                            
                     link = entry.link
                     
                     # RAM'e değil, DB'ye soruyoruz!
@@ -49,8 +62,8 @@ def spider_shift():
             except Exception as e:
                 print(f"   [ERROR] System shit the bed while scanning {rss_url}: {e}")
         
-        print("\n⏳ [SPIDER] Patrol finished. Sleeping for 10 minutes to avoid bans...\n")
-        time.sleep(600) 
+        print("\n⏳ [SPIDER] Patrol finished. Sleeping for 5 minutes...\n")
+        time.sleep(300) # Eskiden 600 saniyeydi, 300'e (5 dakika) indirdik.
 
 if __name__ == "__main__":
     spider_shift()

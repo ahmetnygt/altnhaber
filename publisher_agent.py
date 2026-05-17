@@ -3,85 +3,141 @@ import sqlite3
 import asyncio
 from dotenv import load_dotenv
 from telethon import TelegramClient
+from instagrapi import Client
+import time
 
 load_dotenv()
 
+# Telegram Ayarları
 API_ID = int(os.getenv("TELEGRAM_API_ID"))
 API_HASH = os.getenv("TELEGRAM_API_HASH")
+TARGET_CHAT = '@altnhaber' # Telegram kanalın
+
+# Instagram Ayarları
+INSTA_USERNAME = os.getenv("INSTA_USERNAME")
+INSTA_PASSWORD = os.getenv("INSTA_PASSWORD")
+
 DB_NAME = "altn_media.db"
-TARGET_CHAT = '@altnhaber' # Buraya kendi username'ini veya test grubunu yazabilirsin
+INSTA_SESSION_FILE = "insta_session.json"
 
-async def run_publisher():
-    print("📤 [PUBLISHER] Yayına hazır içerikler taranıyor...")
+# Instagram Client
+insta_client = Client()
+
+def login_instagram():
+    """Instagram'a giriş yapar, session dosyasının sahiden çalışıp çalışmadığını test eder."""
+    try:
+        if os.path.exists(INSTA_SESSION_FILE):
+            insta_client.load_settings(INSTA_SESSION_FILE)
+            # Session geçerli mi diye ufak bir istek atıp test edelim
+            try:
+                # Kendi profil bilgimizi çekmeyi deniyoruz, patlamazsa session sağlamdır
+                insta_client.current_user() 
+                print("🟢 [INSTA] Eski oturum (session) zımba gibi, giriş yapıldı.")
+                return # Başarılıysa fonksiyonu bitir ve çık
+            except Exception as e:
+                print(f"⚠️ [INSTA] Eski oturum patlamış veya süresi dolmuş. Sıfırdan giriliyor... Detay: {e}")
+        
+        # Eğer dosya yoksa veya üstteki test patladıysa normal giriş yap
+        insta_client.login(INSTA_USERNAME, INSTA_PASSWORD)
+        insta_client.dump_settings(INSTA_SESSION_FILE)
+        print("🟢 [INSTA] Yeni oturum oluşturuldu ve giriş yapıldı.")
+    except Exception as e:
+        print(f"❌ [INSTA ERROR] Giriş fena patladı: {e}")
+        
+def get_hashtags(category):
+    """Kategoriye göre yapay zekanın seçtiği konuya uygun hashtagler üretir."""
+    base_tags = "#sondakika #haber #altnhaber "
+    cat_str = str(category).lower() if category else ""
     
-    # 'altnhaber' session ismini kullanıyoruz, oturumun zaten açık olduğunu varsayıyorum
-    client = TelegramClient('altnhaber', API_ID, API_HASH)
-    await client.connect()
+    if "ekonomi" in cat_str:
+        return base_tags + "#ekonomi #dolar #borsa #finans"
+    elif "spor" in cat_str:
+        return base_tags + "#spor #futbol #transfer #galatasaray #fenerbahçe #beşiktaş"
+    elif "teknoloji" in cat_str:
+        return base_tags + "#teknoloji #yapayzeka #bilim #yazılım"
+    else:
+        return base_tags + "#gündem #türkiye #haberler #gündemhaberleri"
 
-    if not await client.is_user_authorized():
-        print("❌ [ERROR] Telegram oturumu açık değil! Önce scraper'ı çalıştırıp giriş yap.")
-        await client.disconnect()
+async def run_single_publisher(n_id, title, caption_text):
+    print(f"🚀 [PUBLISHER] {n_id} ID'li haber dağıtıma çıkıyor...")
+    video_path = f"render_outputs/altn_reels_{n_id}.mp4"
+    
+    if not os.path.exists(video_path):
+        print(f"⚠️ [UYARI] Video dosyası bulunamadı: {video_path}")
         return
 
-    conn = sqlite3.connect(DB_NAME, timeout=10)
+    # Veritabanından kategoriyi çekelim (Hashtagler için lazım)
+    conn = sqlite3.connect(DB_NAME, timeout=30)
     c = conn.cursor()
+    c.execute("SELECT category FROM news_pool WHERE id=?", (n_id,))
+    res = c.fetchone()
+    category = res[0] if res else "Gündem"
+
+    # --- 1. TELEGRAM YAYINI ---
+    client = TelegramClient('altnhaber', API_ID, API_HASH)
+    await client.connect()
     
-    # Sadece renderlanmış ama henüz test edilmemiş videoları çek
-    c.execute("SELECT id, title, caption FROM news_pool WHERE status='published'")
-    items = c.fetchall()
+    if await client.is_user_authorized():
+        tg_caption = f"🎬 **{title}**\n\n{caption_text}\n\n🤖 *ALT+N Media*"
+        try:
+            await client.send_file(TARGET_CHAT, video_path, caption=tg_caption, supports_streaming=True)
+            print("✅ [TELEGRAM] Video başarıyla fırlatıldı.")
+        except Exception as e:
+            print(f"❌ [TELEGRAM HATA] Gönderirken patladık: {e}")
+    await client.disconnect()
 
-    if not items:
-        print("🤷‍♂️ [PUBLISHER] Paylaşılacak taze mal yok.")
-    else:
-        for n_id, title, caption_text in items: # summary yerine caption_text oldu
-            video_path = f"render_outputs/altn_reels_{n_id}.mp4"
+    # --- 2. INSTAGRAM REELS YAYINI ---
+    login_instagram()
+    insta_caption = f"{title}\n\n{caption_text}\n\n{get_hashtags(category)}"
+    
+    try:
+        print("⏳ [INSTA] Video Reels olarak yükleniyor, bu biraz sürebilir...")
+        # clip_upload fonksiyonu videoyu Reels olarak Instagram'a basar
+        insta_client.clip_upload(
+            video_path,
+            insta_caption,
+            extra_data={
+                "custom_accessibility_caption": title,
+                "like_and_view_counts_disabled": False,
+                "disable_comments": False
+            }
+        )
+        print("✅ [INSTAGRAM] Reels başarıyla yayınlandı!")
+    except Exception as e:
+        print(f"❌ [INSTAGRAM HATA] Reels atılamadı: {e}")
 
-            if os.path.exists(video_path):
-                print(f"🚀 [Ateşleniyor] {title[:30]}...")
-                # Telegram'a giden uzun metin
-                caption = f"🎬 **{title}**\n\n{caption_text}\n\n🤖 *ALT+N Media Production Pipeline Test*"
-                
-                try:
-                    await client.send_file(TARGET_CHAT, video_path, caption=caption, supports_streaming=True)
-                    c.execute("UPDATE news_pool SET status='posted_to_test' WHERE id=?", (n_id,))
-                    print(f"✅ [BAŞARILI] {n_id} ID'li video Telegram'a fırlatıldı.")
-                except Exception as e:
-                    print(f"❌ [HATA] Gönderirken patladık: {e}")
-            else:
-                print(f"⚠️ [UYARI] Video dosyası bulunamadı: {video_path}")
-
+    # Yayın bitince DB'yi güncelle
+    c.execute("UPDATE news_pool SET status='posted_to_all' WHERE id=?", (n_id,))
     conn.commit()
     conn.close()
-    await client.disconnect()
-    
-# Argümanları caption_text olarak değiştirdik
-async def run_single_publisher(n_id, title, caption_text):
-    client = TelegramClient('altnhaber', API_ID, API_HASH)
-    await client.connect()
-    
-    if not await client.is_user_authorized():
-        await client.disconnect()
-        return
-
-    video_path = f"render_outputs/altn_reels_{n_id}.mp4"
-    if os.path.exists(video_path):
-        caption = f"🎬 **{title}**\n\n{caption_text}\n\n🤖 *ALT+N Media Pipeline*"
-        try:
-            await client.send_file(TARGET_CHAT, video_path, caption=caption, supports_streaming=True)
-            # Yayın bittiği an DB'yi kilitlemeden güncelle
-            conn = sqlite3.connect(DB_NAME, timeout=30)
-            conn.execute("UPDATE news_pool SET status='posted_to_test' WHERE id=?", (n_id,))
-            conn.commit()
-            conn.close()
-            print(f"✅ [SUCCESS] {n_id} Telegram'a fırlatıldı.")
-        except Exception as e:
-            print(f"❌ [HATA] Gönderirken patladık: {e}")
-    
-    await client.disconnect()
+    print(f"🏆 [BİTTİ] {n_id} numaralı haber tüm platformlara dağıtıldı.")
 
 def publish_single_item(n_id, title, caption_text):
+    """Render.py'den çağrılacak asenkron tetikleyici"""
     asyncio.run(run_single_publisher(n_id, title, caption_text))
-
+    
 def start_publishing():
-    """Main döngüsünden çağrılacak olan senkron wrapper."""
-    asyncio.run(run_publisher())
+    print("🚀 [PUBLISHER] Yayın botu sahaya indi, renderlanmış videoları bekliyor...")
+    while True:
+        try:
+            conn = sqlite3.connect(DB_NAME, timeout=30)
+            c = conn.cursor()
+            
+            # Render motorunun işini bitirdiği (status='rendered') haberleri bul
+            c.execute("SELECT id, title, caption FROM news_pool WHERE status='rendered'")
+            ready_items = c.fetchall()
+            
+            for item in ready_items:
+                n_id, title, caption_text = item
+                # Asenkron dağıtım fonksiyonunu çalıştır (Hem Telegram Hem Insta)
+                asyncio.run(run_single_publisher(n_id, title, caption_text))
+                
+            conn.close()
+        except Exception as e:
+            print(f"❌ [PUBLISHER HATA] Döngüde bir bokluk çıktı: {e}")
+            
+        time.sleep(30) # Her 30 saniyede bir yeni video çıkmış mı diye kontrol et
+
+if __name__ == "__main__":
+    # Test etmek istersen burayı kullanabilirsin
+    pass

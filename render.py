@@ -35,33 +35,52 @@ def split_text_into_lines(text, font, max_width):
         lines.append(temp_line)
     return lines
 
-def create_transparent_overlay(title, summary, overlay_out_path):
+def create_transparent_overlay(title, summary, category, overlay_out_path):
     """
     Arkası transparan 1080x1920 bir PNG oluşturur.
-    Üzerine template.png'yi ve metinleri çakar.
-    Bunu videonun veya fotoğrafın üstüne sticker gibi yapıştıracağız.
+    Kategoriye göre dinamik olarak şablonu (template_*.png) ve başlık rengini belirler.
+    Ayrıca sağ alta yönlendirici CTA metni ekler.
     """
+    # Kategori ismini güvenli hale getir
+    cat_str = str(category).lower() if category else "gündem"
+    
+    # 1. KATEGORİYE GÖRE DİNAMİK ŞABLON VE RENK SEÇİMİ
+    if "ekonomi" in cat_str:
+        template_path = "template_economy.png"
+        title_color = (0, 210, 106, 255) # Borsa Yeşili
+    elif "spor" in cat_str:
+        template_path = "template_sport.png"
+        title_color = (255, 107, 0, 255) # Dinamik Turuncu
+    elif "teknoloji" in cat_str:
+        template_path = "template_tech.png"
+        title_color = (0, 229, 255, 255) # Siber Mavi
+    else:
+        template_path = "template.png" # Varsayılan: Gündem
+        title_color = (255, 30, 30, 255) # Neon Kırmızı
+
     # Tamamen transparan bir tuval aç
     overlay = Image.new("RGBA", (1080, 1920), (0, 0, 0, 0))
     
     # Şablonu Bindir
-    template_path = "template.png"
     if os.path.exists(template_path):
         template = Image.open(template_path).convert("RGBA")
         template = template.resize((1080, 1920), Image.Resampling.LANCZOS)
         overlay.paste(template, (0, 0), template)
     else:
-        print("   ⚠️ [WARNING] template.png bulunamadı! Yazılar şablonsuz basılacak.")
+        print(f"   ⚠️ [WARNING] {template_path} bulunamadı! Yazılar şablonsuz basılacak.")
 
-    # Yazıları Ekle (Sola Yatık)
+    # Yazıları Ekle 
     draw = ImageDraw.Draw(overlay)
     try:
         font_title = ImageFont.truetype("Antonio-Bold.ttf", 75) 
         font_summary = ImageFont.truetype("Antonio-Regular.ttf", 38)
+        # YENİ FONT: Detaylar metni için daha küçük ve zarif bir font
+        font_detail = ImageFont.truetype("Antonio-Regular.ttf", 28) 
     except:
         print("   ⚠️ [WARNING] Antonio fontları bulunamadı, default font kullanılıyor.")
         font_title = ImageFont.load_default()
         font_summary = ImageFont.load_default()
+        font_detail = ImageFont.load_default()
 
     max_text_width = 920 
     x_left_margin = 80 
@@ -72,8 +91,6 @@ def create_transparent_overlay(title, summary, overlay_out_path):
     line_spacing_title = 10
     line_spacing_summary = 8
     
-    # Yazıların toplam yüksekliğini hesapla ki aşağıdan yukarı hizalayabilelim
-    # Font metriklerini güvenli şekilde alalım
     ascent_t, descent_t = font_title.getmetrics()
     h_title = ascent_t + descent_t
     
@@ -82,44 +99,56 @@ def create_transparent_overlay(title, summary, overlay_out_path):
 
     total_title_h = len(title_lines) * h_title + (len(title_lines)-1) * line_spacing_title
     total_summary_h = len(summary_lines) * h_summary + (len(summary_lines)-1) * line_spacing_summary
-    total_text_height = total_title_h + 35 + total_summary_h 
+    
+    # Detaylar yazısı için ekstra 50 piksel (boşluk + yazı boyutu) ekliyoruz
+    total_text_height = total_title_h + 35 + total_summary_h + 50 
 
     start_y = 1480 - total_text_height
     current_y = start_y
 
-    # GÖRSEL OKUNABİLİRLİK İÇİN GRADIENT (KARARTMA) EKLENTİSİ
-    # Metnin başlayacağı yerden biraz daha yukarıdan başlayarak en alta kadar siyahlaşan bir efekt
-    grad_start = max(0, start_y - 150)
-    for y in range(int(grad_start), 1920):
-        # 0'dan 230'a kadar (neredeyse tam siyah) yumuşak geçiş
-        alpha = int(230 * ((y - grad_start) / (1920 - grad_start))) 
-        draw.line([(0, y), (1080, y)], fill=(0, 0, 0, alpha))
-
-    # BAŞLIK (Daha parlak kırmızı ve siyah çerçeve ile)
+    # BAŞLIK (Dinamik Kategori Rengi İle)
     for line in title_lines:
         draw.text(
             (x_left_margin, current_y), 
             line, 
             font=font_title, 
-            fill=(255, 30, 30, 255), # Çok daha parlak neon bir kırmızı
-            stroke_width=4,          # Kalın siyah dış çerçeve
+            fill=title_color,        
+            stroke_width=4,          
             stroke_fill=(0, 0, 0, 255)
         )
         current_y += h_title + line_spacing_title
 
-    current_y += 35 # Başlık ile özet arası ekstra boşluk
+    current_y += 35 
 
-    # ÖZET METNİ (Siyah çerçeve ile)
+    # ÖZET METNİ 
     for line in summary_lines:
         draw.text(
             (x_left_margin, current_y), 
             line, 
             font=font_summary, 
             fill=(255, 255, 255, 255),
-            stroke_width=2,         # Okunabilirliği artırmak için ince çerçeve
+            stroke_width=2,         
             stroke_fill=(0, 0, 0, 255)
         )
         current_y += h_summary + line_spacing_summary
+
+    # YENİ EKLENEN KISIM: Sağ alta CTA (Detaylar açıklamada) yazısı
+    current_y += 20 # Özet metni ile detaylar yazısı arası boşluk
+    detail_text = "Detaylar açıklamada..."
+    
+    # Yazının genişliğini hesapla ki ekranın sağına yaslayabilelim
+    detail_width = font_detail.getlength(detail_text)
+    # 1080 piksel genişlikten, yazının genişliğini ve 80 piksel sağ marjı çıkar
+    x_right_margin = 1080 - detail_width - 80
+
+    draw.text(
+        (x_right_margin, current_y), 
+        detail_text, 
+        font=font_detail, 
+        fill=(200, 200, 200, 255), # Hafif gri tonu, ana haberden rol çalmasın
+        stroke_width=2,         
+        stroke_fill=(0, 0, 0, 255)
+    )
 
     overlay.save(overlay_out_path, "PNG")
     return overlay_out_path
@@ -217,10 +246,11 @@ def create_reels_clip(media_path, overlay_path, video_out_path, ox=50):
 def start_production():
     print("🎥 [PHASE 4] Director's Chair. AI and Production Active...")
     
-    # 1. Önce listeyi alıyoruz (caption sütunu da eklendi)
+    # 1. Önce listeyi alıyoruz (category sütunu da eklendi)
     conn = sqlite3.connect(DB_NAME, timeout=30)
     c = conn.cursor()
-    c.execute("SELECT id, title, full_text, caption, media_url FROM news_pool WHERE status='render_ready'")
+    # SQL sorgusuna 'category' eklendi!
+    c.execute("SELECT id, title, full_text, caption, media_url, category FROM news_pool WHERE status='render_ready'")
     news_items = c.fetchall()
     conn.close() 
 
@@ -231,9 +261,9 @@ def start_production():
     os.makedirs("render_outputs", exist_ok=True)
 
     for item in news_items:
-        # Yeni sıralama: summary (kısa metin), caption_text (uzun açıklama)
-        n_id, title, summary, caption_text, media_json = item 
-        print(f"\n🎬 Processing: {title[:40]}...")
+        # category değişkenini de paketten çıkarıyoruz
+        n_id, title, summary, caption_text, media_json, category = item 
+        print(f"\n🎬 Processing: {title[:40]}... [Kategori: {category}]")
         
         try:
             media_list = json.loads(media_json)
@@ -287,8 +317,8 @@ def start_production():
                     else:
                         active_media_path = selected_media 
 
-                    # 3. Transparan şablonu ve yazıları üret
-                    create_transparent_overlay(title, summary, temp_overlay)
+                    # 3. Transparan şablonu ve yazıları üret (Artık kategori de gönderiyoruz)
+                    create_transparent_overlay(title, summary, category, temp_overlay)
 
                     # 4. Render motorunu ateşle (Yapay zekanın odak noktasıyla!)
                     create_reels_clip(active_media_path, temp_overlay, video_out, ox=o_x)

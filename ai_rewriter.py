@@ -45,7 +45,7 @@ def ai_edit_desk():
         Görevin, sana gönderilen farklı kaynaklardaki haber metinlerini HARMANLAYIP, eksik detayları birleştirerek kusursuz, tek bir haber çıkarmaktır.
         
         Bana SADECE şu JSON formatını dön:
-        1. "category": Bu haber hangi sayfaya uyar? (Gündem, Ekonomi, Spor, Teknoloji veya Çöp).
+        1. "category": Bu haber hangi kategorilere uyar? Haberin içeriğine göre birden fazla kategori seçebilirsin. Seçtiklerini aralarına virgül koyarak yaz (Örn: "Gündem, Ekonomi" veya "Spor, Gündem"). Sadece şu 5 etiketi kullanabilirsin: Gündem, Ekonomi, Spor, Teknoloji, Çöp.
         2. "title": Videonun üstüne yazılacak, 4-6 kelimelik çok vurucu başlık.
         3. "reels_text": Videonun/Fotoğrafın ÜZERİNE basılacak; SADECE 1 veya en fazla 2 kısa cümleden oluşan, maksimum 150 karakterlik vurucu özet metin.
         4. "caption_text": Instagram veya Telegram'da gönderinin AÇIKLAMA kısmına yazılacak; haberin tüm detaylarını içeren, 3-4 cümlelik, doyurucu ve akıcı detay paragrafı.
@@ -71,7 +71,7 @@ def ai_edit_desk():
             new_reels_text = ai_output.get("reels_text", "")
             new_caption_text = ai_output.get("caption_text", new_reels_text) # Yapay zeka unutursa fallback olarak reels texti al
 
-            if category == "Çöp":
+            if "Çöp" in category:
                 c.execute("UPDATE news_pool SET status='trash' WHERE group_id=?", (g_id,))
                 print("   🗑️ Trash detected, group destroyed.")
             else:

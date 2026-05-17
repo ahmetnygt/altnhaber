@@ -27,7 +27,7 @@ def clean_and_group_pool():
     conn = sqlite3.connect(DB_NAME, timeout=10)
     c = conn.cursor()
 
-    time_limit = (datetime.now() - timedelta(minutes=1)).strftime("%Y-%m-%d %H:%M:%S")
+    time_limit = (datetime.now() - timedelta(minutes=5)).strftime("%Y-%m-%d %H:%M:%S")
     
     # Sadece bekleyenleri çekiyoruz, embedding'i de alıyoruz
     c.execute("SELECT id, source_name, title, full_text, embedding FROM news_pool WHERE status='pending' AND fetched_at <= ?", (time_limit,))
